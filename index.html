@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>VegiWell 植悅｜廣告監測看板</title>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <style>
     :root {
       --brown: #BA693D;
@@ -62,6 +63,30 @@
     .card.highlight { background: var(--brown); border-color: var(--brown); }
     .card.highlight .card-label, .card.highlight .card-sub { color: rgba(255,255,255,.75); }
     .card.highlight .card-value { color: var(--white); }
+    .card-delta { font-size: 12px; margin-top: 6px; font-weight: 600; }
+    .card-delta.delta-up { color: #137333; }
+    .card-delta.delta-down { color: #c5221f; }
+    .card-delta.delta-neutral { color: var(--muted); }
+    .card.highlight .card-delta.delta-up { color: #7eda8a; }
+    .card.highlight .card-delta.delta-down { color: #ffaaaa; }
+    .card.highlight .card-delta.delta-neutral { color: rgba(255,255,255,.65); }
+
+    /* ── Period Selector ── */
+    .period-bar { background: var(--card-bg); border: 1px solid var(--bdr); border-radius: 12px; padding: 14px 18px; margin-bottom: 20px; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+    .period-label { font-size: 13px; color: var(--muted); font-weight: 500; white-space: nowrap; }
+    .period-presets { display: flex; gap: 8px; flex-wrap: wrap; }
+    .period-btn { padding: 6px 16px; border: 1.5px solid var(--bdr); border-radius: 20px; background: var(--beige); color: var(--dark); font-size: 13px; font-weight: 500; cursor: pointer; transition: all .2s; white-space: nowrap; }
+    .period-btn:hover { border-color: var(--brown); color: var(--brown); }
+    .period-btn.active { background: var(--brown); border-color: var(--brown); color: var(--white); }
+    .period-custom { display: none; margin-top: 12px; width: 100%; flex-direction: column; gap: 10px; }
+    .period-custom.show { display: flex; }
+    .period-custom-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .period-custom-label { font-size: 12px; color: var(--muted); font-weight: 600; min-width: 52px; }
+    .period-date-input { padding: 6px 10px; border: 1.5px solid var(--bdr); border-radius: 8px; font-size: 13px; color: var(--dark); background: var(--white); outline: none; cursor: pointer; }
+    .period-date-input:focus { border-color: var(--brown); }
+    .period-sep { font-size: 13px; color: var(--muted); }
+    .period-apply-btn { padding: 6px 18px; background: var(--brown); color: var(--white); border: none; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; transition: background .2s; }
+    .period-apply-btn:hover { background: #a55a32; }
 
     /* ── Charts ── */
     .chart-row { display: grid; grid-template-columns: 2fr 1fr; gap: 16px; margin-bottom: 24px; }
@@ -113,6 +138,55 @@
     .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--dark); color: var(--white); padding: 12px 24px; border-radius: 10px; font-size: 13px; opacity: 0; transition: opacity .3s; z-index: 999; pointer-events: none; }
     .toast.show { opacity: 1; }
 
+    /* ── Upload Zone ── */
+    .upload-section { margin-bottom: 20px; }
+    .upload-zone { border: 2px dashed var(--bdr); border-radius: 12px; padding: 32px 24px; text-align: center; cursor: pointer; transition: border-color .2s, background .2s; background: var(--card-bg); }
+    .upload-zone:hover, .upload-zone.drag-over { border-color: var(--brown); background: #fff4ea; }
+    .upload-zone-icon { font-size: 36px; margin-bottom: 10px; }
+    .upload-zone-text { font-size: 14px; color: var(--muted); line-height: 1.6; }
+    .upload-zone-text strong { color: var(--brown); }
+    .upload-preview { background: var(--card-bg); border: 1px solid var(--bdr); border-radius: 12px; padding: 16px; margin-top: 14px; }
+    .upload-preview-title { font-size: 13px; font-weight: 600; color: var(--dark); margin-bottom: 10px; }
+    .upload-preview-scroll { overflow-x: auto; }
+    .upload-preview table { font-size: 12px; }
+    .upload-preview th { font-size: 11px; }
+    .upload-preview td { padding: 8px 12px; }
+    .upload-actions { display: flex; align-items: center; gap: 12px; margin-top: 14px; flex-wrap: wrap; }
+    .upload-count { font-size: 13px; color: var(--muted); flex: 1; }
+    .upload-confirm-btn { padding: 8px 20px; background: #137333; color: var(--white); border: none; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; transition: background .2s; }
+    .upload-confirm-btn:hover { background: #0f5829; }
+    .upload-confirm-btn:disabled { background: var(--muted); cursor: not-allowed; }
+    .upload-cancel-btn { padding: 8px 16px; background: none; color: var(--muted); border: 1.5px solid var(--bdr); border-radius: 8px; font-size: 13px; cursor: pointer; transition: all .2s; }
+    .upload-cancel-btn:hover { border-color: #c5221f; color: #c5221f; }
+
+    /* ── AI 建議 ── */
+    .ai-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; flex-wrap: wrap; gap: 10px; }
+    .ai-meta { font-size: 12px; color: var(--muted); }
+    .ai-refresh-btn { padding: 8px 16px; background: var(--brown); color: var(--white); border: none; border-radius: 8px; font-size: 13px; font-weight: 600; cursor: pointer; transition: background .2s; }
+    .ai-refresh-btn:hover { background: #a55a32; }
+    .ai-section { margin-bottom: 20px; }
+    .ai-section-title { font-size: 13px; font-weight: 700; margin-bottom: 10px; display: flex; align-items: center; gap: 6px; }
+    .ai-item { background: var(--card-bg); border: 1px solid var(--bdr); border-radius: 12px; padding: 14px 16px; margin-bottom: 8px; display: flex; gap: 12px; align-items: flex-start; }
+    .ai-item-pri { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; margin-top: 5px; }
+    .pri-high   { background: #c5221f; }
+    .pri-medium { background: #f9ab00; }
+    .pri-low    { background: #137333; }
+    .ai-item-body { flex: 1; }
+    .ai-item-target { font-size: 12px; color: var(--muted); margin-bottom: 3px; }
+    .ai-item-action { font-size: 13px; font-weight: 600; color: var(--dark); margin-bottom: 4px; }
+    .ai-item-reason { font-size: 12px; color: var(--muted); line-height: 1.6; }
+    .ai-item-expected { font-size: 11px; color: var(--brown); margin-top: 4px; font-style: italic; }
+    .ai-vendor-box { background: linear-gradient(135deg, var(--brown) 0%, #9a5230 100%); border-radius: 14px; padding: 20px 24px; color: var(--white); margin-top: 24px; }
+    .ai-vendor-hdr { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+    .ai-vendor-title { font-size: 13px; font-weight: 700; opacity: .9; }
+    .ai-copy-btn { padding: 5px 12px; background: rgba(255,255,255,.2); border: none; color: white; border-radius: 6px; font-size: 12px; cursor: pointer; transition: background .2s; }
+    .ai-copy-btn:hover { background: rgba(255,255,255,.35); }
+    .ai-vendor-text { font-size: 13px; line-height: 1.9; white-space: pre-line; opacity: .95; }
+    .ai-empty { text-align: center; padding: 60px 20px; }
+    .ai-empty-icon { font-size: 48px; margin-bottom: 16px; }
+    .ai-empty-title { font-size: 15px; font-weight: 600; color: var(--dark); margin-bottom: 8px; }
+    .ai-empty-sub { font-size: 13px; color: var(--muted); line-height: 1.8; }
+
     @media (max-width: 640px) {
       .chart-row { grid-template-columns: 1fr; }
       .card-grid { grid-template-columns: 1fr 1fr; }
@@ -120,6 +194,7 @@
       .content { padding: 16px 12px; }
       .hdr { padding: 0 16px; }
       .nav { padding: 0 8px; }
+      .period-bar { flex-direction: column; align-items: flex-start; }
     }
   </style>
 </head>
@@ -155,6 +230,7 @@
     <button class="nav-tab active" onclick="switchTab('overview')">📊 總覽</button>
     <button class="nav-tab" onclick="switchTab('ads')">📣 廣告明細</button>
     <button class="nav-tab" onclick="switchTab('sales')">🛒 銷售數據</button>
+    <button class="nav-tab" onclick="switchTab('ai')">🤖 AI 建議</button>
     <button class="nav-tab" onclick="switchTab('actions')">📋 行動紀錄</button>
   </div>
 
@@ -162,26 +238,60 @@
 
     <!-- ── 總覽 ── -->
     <div class="page active" id="page-overview">
+
+      <!-- Period Selector Bar -->
+      <div class="period-bar">
+        <span class="period-label">比較期間</span>
+        <div class="period-presets">
+          <button class="period-btn active" id="pb-week" onclick="selectPeriodPreset('week', this)">本週 vs 上週</button>
+          <button class="period-btn" id="pb-30" onclick="selectPeriodPreset('30', this)">近 30 天 vs 前 30 天</button>
+          <button class="period-btn" id="pb-90" onclick="selectPeriodPreset('90', this)">近 90 天 vs 前 90 天</button>
+          <button class="period-btn" id="pb-custom" onclick="selectPeriodPreset('custom', this)">自訂</button>
+        </div>
+        <div class="period-custom" id="periodCustom">
+          <div class="period-custom-row">
+            <span class="period-custom-label">期間 A</span>
+            <input class="period-date-input" type="date" id="periodAStart">
+            <span class="period-sep">至</span>
+            <input class="period-date-input" type="date" id="periodAEnd">
+          </div>
+          <div class="period-custom-row">
+            <span class="period-custom-label">期間 B</span>
+            <input class="period-date-input" type="date" id="periodBStart">
+            <span class="period-sep">至</span>
+            <input class="period-date-input" type="date" id="periodBEnd">
+          </div>
+          <div class="period-custom-row">
+            <button class="period-apply-btn" onclick="applyCustomPeriod()">套用</button>
+          </div>
+        </div>
+      </div>
+
       <div class="card-grid">
         <div class="card highlight">
-          <div class="card-label">本週真實 ROAS</div>
+          <div class="card-label">真實 ROAS（含代操費）</div>
           <div class="card-value" id="card-roas">--</div>
-          <div class="card-sub">Shopline 收入 ÷ 廣告花費</div>
+          <div class="card-sub" style="margin-bottom:6px">Shopline 收入 ÷ 含代操總成本</div>
+          <div style="font-size:11px;opacity:.8;margin-bottom:2px">不含代操費：<span id="card-roas-raw" style="font-weight:700">--</span></div>
+          <div class="card-delta delta-neutral" id="delta-roas"></div>
         </div>
         <div class="card">
-          <div class="card-label">本週廣告總花費</div>
+          <div class="card-label">廣告總花費</div>
           <div class="card-value" id="card-spend">--</div>
           <div class="card-sub">Meta + Google 合計</div>
+          <div class="card-delta delta-neutral" id="delta-spend"></div>
         </div>
         <div class="card">
-          <div class="card-label">本週 Shopline 收入</div>
+          <div class="card-label">Shopline 收入</div>
           <div class="card-value" id="card-revenue">--</div>
           <div class="card-sub">實際訂單金額</div>
+          <div class="card-delta delta-neutral" id="delta-revenue"></div>
         </div>
         <div class="card">
-          <div class="card-label">本週訂單數</div>
+          <div class="card-label">訂單數</div>
           <div class="card-value" id="card-orders">--</div>
           <div class="card-sub">Shopline 訂單</div>
+          <div class="card-delta delta-neutral" id="delta-orders"></div>
         </div>
       </div>
 
@@ -191,7 +301,7 @@
           <div class="chart-wrap"><canvas id="roasChart"></canvas></div>
         </div>
         <div class="chart-box">
-          <div class="chart-title">本週廣告花費分配</div>
+          <div class="chart-title">廣告花費分配</div>
           <div class="chart-wrap"><canvas id="spendPieChart"></canvas></div>
         </div>
       </div>
@@ -241,6 +351,33 @@
 
     <!-- ── 銷售數據 ── -->
     <div class="page" id="page-sales">
+
+      <!-- Shopline Upload Section -->
+      <div class="upload-section">
+        <div class="upload-zone" id="uploadZone"
+          onclick="document.getElementById('fileInput').click()"
+          ondragover="handleDragOver(event)"
+          ondragleave="handleDragLeave(event)"
+          ondrop="handleDrop(event)">
+          <div class="upload-zone-icon">📂</div>
+          <div class="upload-zone-text">
+            拖曳 Shopline CSV / Excel 至此，或<strong>點此選擇檔案</strong>
+          </div>
+        </div>
+        <input type="file" id="fileInput" accept=".csv,.xlsx,.xls" style="display:none" onchange="handleFileSelect(event)">
+        <div id="uploadPreviewWrap" style="display:none">
+          <div class="upload-preview">
+            <div class="upload-preview-title" id="uploadPreviewTitle"></div>
+            <div class="upload-preview-scroll" id="uploadPreviewTable"></div>
+          </div>
+          <div class="upload-actions">
+            <span class="upload-count" id="uploadCount"></span>
+            <button class="upload-cancel-btn" onclick="cancelUpload()">✕ 取消</button>
+            <button class="upload-confirm-btn" id="uploadConfirmBtn" onclick="confirmUpload()">✅ 確認上傳</button>
+          </div>
+        </div>
+      </div>
+
       <div class="filter-row">
         <span class="filter-label">期間</span>
         <select class="filter-select" id="salesDays" onchange="loadSales()">
@@ -262,6 +399,11 @@
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- ── AI 建議 ── -->
+    <div class="page" id="page-ai">
+      <div id="aiWrap"></div>
     </div>
 
     <!-- ── 行動紀錄 ── -->
@@ -291,6 +433,15 @@ const SB_URL = 'https://dqxdgxbebumxtbyvbxkn.supabase.co';
 const SB_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImRxeGRneGJlYnVteHRieXZieGtuIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzU5NDEwMzMsImV4cCI6MjA5MTUxNzAzM30.PF-nVLU6oFcsArQveJF6jhdrN4LnYfzug3-SgCa0n5o';
 const PIN = 'love5168';
 
+/* ══ Shopline column map ══ */
+const SHOPLINE_COL_MAP = {
+  '日期': 'date', '訂單日期': 'date',
+  '商品編號': 'product_id', 'SKU': 'sku', 'Sku': 'sku',
+  '商品名稱': 'product_name',
+  '訂單數量': 'orders', '訂單筆數': 'orders',
+  '銷售金額': 'revenue', '實際收款': 'revenue',
+};
+
 /* ══ Auth ══ */
 function doLogin() {
   const val = document.getElementById('pinInput').value;
@@ -310,13 +461,28 @@ function doLogout() {
   location.reload();
 }
 
-/* ══ Supabase ══ */
+/* ══ Supabase read ══ */
 async function sbFetch(path) {
   const res = await fetch(`${SB_URL}/rest/v1/${path}`, {
     headers: { 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` }
   });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
+}
+
+/* ══ Supabase write ══ */
+async function sbWrite(table, rows) {
+  const res = await fetch(`${SB_URL}/rest/v1/${table}`, {
+    method: 'POST',
+    headers: {
+      'apikey': SB_KEY,
+      'Authorization': `Bearer ${SB_KEY}`,
+      'Content-Type': 'application/json',
+      'Prefer': `resolution=merge-duplicates,return=minimal`
+    },
+    body: JSON.stringify(rows)
+  });
+  if (!res.ok) throw new Error(await res.text());
 }
 
 /* ══ Helpers ══ */
@@ -329,19 +495,40 @@ function dateNDaysAgo(n) {
   return d.toISOString().split('T')[0];
 }
 
+function todayStr() {
+  return new Date().toISOString().split('T')[0];
+}
+
 function roasClass(v) {
   if (!v) return '';
   return v >= 3 ? 'roas-good' : v >= 1.5 ? 'roas-mid' : 'roas-bad';
 }
 
+/* ══ Delta helper ══ */
+function renderDelta(elId, valA, valB) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  if (!valA && valA !== 0 || !valB && valB !== 0 || valB === 0) {
+    el.textContent = '';
+    el.className = 'card-delta delta-neutral';
+    return;
+  }
+  const pct = ((valA - valB) / Math.abs(valB)) * 100;
+  const sign = pct >= 0 ? '↑' : '↓';
+  const cls  = pct >= 0 ? 'delta-up' : 'delta-down';
+  el.textContent = `${sign} ${Math.abs(pct).toFixed(1)}% vs 上期`;
+  el.className = `card-delta ${cls}`;
+}
+
 /* ══ Tabs ══ */
-const TABS = ['overview','ads','sales','actions'];
+const TABS = ['overview','ads','sales','ai','actions'];
 function switchTab(tab) {
   document.querySelectorAll('.nav-tab').forEach((t,i) => t.classList.toggle('active', TABS[i] === tab));
   document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
   document.getElementById(`page-${tab}`).classList.add('active');
   if (tab === 'ads')     loadAds();
   if (tab === 'sales')   loadSales();
+  if (tab === 'ai')      loadAI();
   if (tab === 'actions') loadActions();
 }
 
@@ -349,6 +536,74 @@ function switchTab(tab) {
 function initApp() {
   document.getElementById('todayDate').textContent =
     new Date().toLocaleDateString('zh-TW', { year:'numeric', month:'long', day:'numeric' });
+  initPeriodDefaults();
+  loadOverview();
+}
+
+/* ══ Period Selector ══ */
+let currentPeriod = { preset: 'week', aStart: null, aEnd: null, bStart: null, bEnd: null };
+
+function initPeriodDefaults() {
+  // Default: 本週 vs 上週
+  const ranges = calcPresetRanges('week');
+  currentPeriod = { preset: 'week', ...ranges };
+  // Set custom inputs to current defaults
+  document.getElementById('periodAStart').value = ranges.aStart;
+  document.getElementById('periodAEnd').value   = ranges.aEnd;
+  document.getElementById('periodBStart').value = ranges.bStart;
+  document.getElementById('periodBEnd').value   = ranges.bEnd;
+}
+
+function calcPresetRanges(preset) {
+  const today = new Date();
+  today.setHours(0,0,0,0);
+  let aStart, aEnd, bStart, bEnd;
+  if (preset === 'week') {
+    // Period A: last 7 days (today-6 to today), Period B: previous 7 days
+    aEnd   = todayStr();
+    aStart = dateNDaysAgo(6);
+    bEnd   = dateNDaysAgo(7);
+    bStart = dateNDaysAgo(13);
+  } else {
+    const n = parseInt(preset, 10);
+    aEnd   = todayStr();
+    aStart = dateNDaysAgo(n - 1);
+    bEnd   = dateNDaysAgo(n);
+    bStart = dateNDaysAgo(n * 2 - 1);
+  }
+  return { aStart, aEnd, bStart, bEnd };
+}
+
+function selectPeriodPreset(preset, btn) {
+  document.querySelectorAll('.period-btn').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  const customPanel = document.getElementById('periodCustom');
+  if (preset === 'custom') {
+    customPanel.classList.add('show');
+    currentPeriod.preset = 'custom';
+    // Don't auto-load — wait for 套用
+  } else {
+    customPanel.classList.remove('show');
+    const ranges = calcPresetRanges(preset);
+    currentPeriod = { preset, ...ranges };
+    loadOverview();
+  }
+}
+
+function applyCustomPeriod() {
+  const aStart = document.getElementById('periodAStart').value;
+  const aEnd   = document.getElementById('periodAEnd').value;
+  const bStart = document.getElementById('periodBStart').value;
+  const bEnd   = document.getElementById('periodBEnd').value;
+  if (!aStart || !aEnd || !bStart || !bEnd) {
+    toast('請填寫所有日期欄位');
+    return;
+  }
+  if (aStart > aEnd || bStart > bEnd) {
+    toast('開始日期不可晚於結束日期');
+    return;
+  }
+  currentPeriod = { preset: 'custom', aStart, aEnd, bStart, bEnd };
   loadOverview();
 }
 
@@ -356,27 +611,50 @@ function initApp() {
 let roasChartInst, spendPieInst;
 
 async function loadOverview() {
-  const since = dateNDaysAgo(7);
+  const { aStart, aEnd, bStart, bEnd } = currentPeriod;
   try {
-    const [adData, salesData] = await Promise.all([
-      sbFetch(`ad_daily_metrics?date=gte.${since}&level=eq.campaign&select=platform,spend`),
-      sbFetch(`shopline_daily_sales?date=gte.${since}&select=revenue,orders`)
+    const [adA, salesA, adB, salesB] = await Promise.all([
+      sbFetch(`ad_daily_metrics?date=gte.${aStart}&date=lte.${aEnd}&level=eq.campaign&select=platform,spend`),
+      sbFetch(`shopline_daily_sales?date=gte.${aStart}&date=lte.${aEnd}&select=revenue,orders`),
+      sbFetch(`ad_daily_metrics?date=gte.${bStart}&date=lte.${bEnd}&level=eq.campaign&select=platform,spend`),
+      sbFetch(`shopline_daily_sales?date=gte.${bStart}&date=lte.${bEnd}&select=revenue,orders`)
     ]);
 
-    const metaSpend   = adData.filter(r=>r.platform==='meta').reduce((s,r)=>s+Number(r.spend||0), 0);
-    const googleSpend = adData.filter(r=>r.platform==='google').reduce((s,r)=>s+Number(r.spend||0), 0);
-    const totalSpend  = metaSpend + googleSpend;
-    const totalRev    = salesData.reduce((s,r)=>s+Number(r.revenue||0), 0);
-    const totalOrders = salesData.reduce((s,r)=>s+Number(r.orders||0), 0);
-    const trueRoas    = totalSpend > 0 ? totalRev / totalSpend : null;
+    // Period A
+    const metaSpendA    = adA.filter(r=>r.platform==='meta').reduce((s,r)=>s+Number(r.spend||0), 0);
+    const googleSpendA  = adA.filter(r=>r.platform==='google').reduce((s,r)=>s+Number(r.spend||0), 0);
+    const totalSpendA   = metaSpendA + googleSpendA;
+    // 含代操費總成本：Meta × 1.2，Google ÷ 0.8
+    const totalCostA    = metaSpendA * 1.2 + googleSpendA / 0.8;
+    const totalRevA     = salesA.reduce((s,r)=>s+Number(r.revenue||0), 0);
+    const totalOrdersA  = salesA.reduce((s,r)=>s+Number(r.orders||0), 0);
+    const roasRawA      = totalSpendA > 0 ? totalRevA / totalSpendA : null;   // 不含代操
+    const roasWithFeeA  = totalCostA  > 0 ? totalRevA / totalCostA  : null;   // 含代操
 
-    document.getElementById('card-roas').textContent    = trueRoas ? trueRoas.toFixed(2) : '--';
-    document.getElementById('card-spend').textContent   = fmtMoney(totalSpend);
-    document.getElementById('card-revenue').textContent = fmtMoney(totalRev);
-    document.getElementById('card-orders').textContent  = fmtNum(totalOrders);
+    // Period B
+    const metaSpendB    = adB.filter(r=>r.platform==='meta').reduce((s,r)=>s+Number(r.spend||0), 0);
+    const googleSpendB  = adB.filter(r=>r.platform==='google').reduce((s,r)=>s+Number(r.spend||0), 0);
+    const totalSpendB   = metaSpendB + googleSpendB;
+    const totalCostB    = metaSpendB * 1.2 + googleSpendB / 0.8;
+    const totalRevB     = salesB.reduce((s,r)=>s+Number(r.revenue||0), 0);
+    const totalOrdersB  = salesB.reduce((s,r)=>s+Number(r.orders||0), 0);
+    const roasWithFeeB  = totalCostB > 0 ? totalRevB / totalCostB : null;
+
+    // Update cards
+    document.getElementById('card-roas').textContent      = roasWithFeeA ? roasWithFeeA.toFixed(2) : '--';
+    document.getElementById('card-roas-raw').textContent  = roasRawA     ? roasRawA.toFixed(2)     : '--';
+    document.getElementById('card-spend').textContent     = fmtMoney(totalSpendA);
+    document.getElementById('card-revenue').textContent = fmtMoney(totalRevA);
+    document.getElementById('card-orders').textContent  = fmtNum(totalOrdersA);
+
+    // Update deltas
+    renderDelta('delta-roas',    roasWithFeeA, roasWithFeeB);
+    renderDelta('delta-spend',   totalSpendA,  totalSpendB);
+    renderDelta('delta-revenue', totalRevA,    totalRevB);
+    renderDelta('delta-orders',  totalOrdersA, totalOrdersB);
 
     drawRoasChart();
-    drawSpendPie(metaSpend, googleSpend);
+    drawSpendPie(metaSpendA, googleSpendA);
     loadInsight();
   } catch(e) { console.error('總覽載入失敗', e); }
 }
@@ -580,6 +858,232 @@ async function loadSales() {
         </tbody>
       </table>`;
   } catch(e) { console.error('銷售數據載入失敗', e); }
+}
+
+/* ══ AI 建議 ══ */
+const PRI_LABEL = { high: '🔴 高優先', medium: '🟡 中優先', low: '🟢 觀察中' };
+const PRI_CLASS = { high: 'pri-high', medium: 'pri-medium', low: 'pri-low' };
+
+async function loadAI() {
+  const wrap = document.getElementById('aiWrap');
+  wrap.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-text">載入中...</div></div>';
+
+  try {
+    const data = await sbFetch('ad_weekly_insights?order=created_at.desc&limit=1');
+
+    if (!data.length || !data[0].summary) {
+      wrap.innerHTML = `
+        <div class="ai-empty">
+          <div class="ai-empty-icon">🤖</div>
+          <div class="ai-empty-title">AI 分析尚未啟用</div>
+          <div class="ai-empty-sub">
+            待 Phase 2 上線後，系統每週一 08:00 自動分析<br>
+            Meta + Google 廣告數據、GA4 流量與 Shopline 銷售<br>
+            產出結構化建議與廠商討論摘要
+          </div>
+        </div>`;
+      return;
+    }
+
+    const row = data[0];
+    let recs = [];
+    try { recs = typeof row.recommendations === 'string' ? JSON.parse(row.recommendations) : (row.recommendations || []); } catch(e) {}
+
+    const grouped = { high: [], medium: [], low: [] };
+    recs.forEach(r => { const p = r.priority || 'low'; if (grouped[p]) grouped[p].push(r); });
+
+    const recHTML = ['high','medium','low'].filter(p => grouped[p].length).map(p => `
+      <div class="ai-section">
+        <div class="ai-section-title">${PRI_LABEL[p]}</div>
+        ${grouped[p].map(r => `
+          <div class="ai-item">
+            <div class="ai-item-pri ${PRI_CLASS[p]}"></div>
+            <div class="ai-item-body">
+              ${r.target ? `<div class="ai-item-target">${r.target}</div>` : ''}
+              <div class="ai-item-action">${r.action || r.suggestion || ''}</div>
+              ${r.reason ? `<div class="ai-item-reason">${r.reason}</div>` : ''}
+              ${r.expected ? `<div class="ai-item-expected">預期效益：${r.expected}</div>` : ''}
+            </div>
+          </div>`).join('')}
+      </div>`).join('') || '<div class="empty"><div class="empty-text">本週無特別建議</div></div>';
+
+    const vendorText = row.vendor_summary || row.summary || '';
+
+    wrap.innerHTML = `
+      <div class="ai-header">
+        <div>
+          <div style="font-size:15px;font-weight:700;color:var(--dark)">AI 廣告優化建議</div>
+          <div class="ai-meta">分析週期：${row.week_start} ～ ${row.week_end}　｜　總花費 NT$${Math.round(row.total_spend||0).toLocaleString('zh-TW')}　｜　平台 ROAS ${Number(row.total_roas||0).toFixed(2)}</div>
+        </div>
+      </div>
+      ${recHTML}
+      ${vendorText ? `
+      <div class="ai-vendor-box">
+        <div class="ai-vendor-hdr">
+          <div class="ai-vendor-title">📋 給廠商的討論摘要</div>
+          <button class="ai-copy-btn" onclick="copyVendorText()">複製</button>
+        </div>
+        <div class="ai-vendor-text" id="vendorText">${vendorText}</div>
+      </div>` : ''}`;
+
+  } catch(e) {
+    wrap.innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-text">載入失敗：${e.message}</div></div>`;
+  }
+}
+
+function copyVendorText() {
+  const el = document.getElementById('vendorText');
+  if (!el) return;
+  navigator.clipboard.writeText(el.textContent).then(() => toast('已複製到剪貼簿'));
+}
+
+/* ══ Shopline Upload ══ */
+let parsedUploadRows = [];
+let parsedRawHeaders = [];
+
+function handleDragOver(e) {
+  e.preventDefault();
+  document.getElementById('uploadZone').classList.add('drag-over');
+}
+
+function handleDragLeave(e) {
+  document.getElementById('uploadZone').classList.remove('drag-over');
+}
+
+function handleDrop(e) {
+  e.preventDefault();
+  document.getElementById('uploadZone').classList.remove('drag-over');
+  const file = e.dataTransfer.files[0];
+  if (file) processUploadFile(file);
+}
+
+function handleFileSelect(e) {
+  const file = e.target.files[0];
+  if (file) processUploadFile(file);
+  // Reset input so the same file can be re-selected
+  e.target.value = '';
+}
+
+function processUploadFile(file) {
+  const ext = file.name.split('.').pop().toLowerCase();
+  const reader = new FileReader();
+
+  reader.onload = function(e) {
+    try {
+      let wb;
+      if (ext === 'csv') {
+        wb = XLSX.read(e.target.result, { type: 'string', raw: false });
+      } else {
+        wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+      }
+
+      const ws = wb.Sheets[wb.SheetNames[0]];
+      const rawData = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+
+      if (!rawData || rawData.length < 2) {
+        toast('檔案內容為空或格式錯誤');
+        return;
+      }
+
+      const headers = rawData[0].map(h => String(h).trim());
+      parsedRawHeaders = headers;
+
+      // Map columns
+      const colMap = {};
+      headers.forEach((h, i) => {
+        if (SHOPLINE_COL_MAP[h]) colMap[i] = SHOPLINE_COL_MAP[h];
+      });
+
+      parsedUploadRows = rawData.slice(1).filter(row => row.some(c => c !== '')).map(row => {
+        const obj = {};
+        Object.entries(colMap).forEach(([idx, key]) => {
+          obj[key] = row[idx];
+        });
+        return obj;
+      });
+
+      // Show preview
+      showUploadPreview(file.name, rawData.slice(0, 6), headers);
+    } catch(err) {
+      console.error('檔案解析失敗', err);
+      toast('檔案解析失敗，請確認格式正確');
+    }
+  };
+
+  if (ext === 'csv') {
+    reader.readAsText(file, 'UTF-8');
+  } else {
+    reader.readAsArrayBuffer(file);
+  }
+}
+
+function showUploadPreview(filename, previewRows, headers) {
+  const totalRows = parsedUploadRows.length;
+  document.getElementById('uploadPreviewTitle').textContent = `預覽：${filename}（前 5 筆）`;
+  document.getElementById('uploadCount').textContent = `共 ${totalRows} 筆資料`;
+
+  if (!previewRows || previewRows.length < 2) {
+    document.getElementById('uploadPreviewTable').innerHTML = '<p style="padding:12px;color:var(--muted)">無可預覽資料</p>';
+  } else {
+    const headerRow = previewRows[0];
+    const dataRows  = previewRows.slice(1, 6);
+    document.getElementById('uploadPreviewTable').innerHTML = `
+      <table>
+        <thead><tr>${headerRow.map(h=>`<th>${h}</th>`).join('')}</tr></thead>
+        <tbody>
+          ${dataRows.map(row=>`<tr>${headerRow.map((_,i)=>`<td>${row[i]??''}</td>`).join('')}</tr>`).join('')}
+        </tbody>
+      </table>`;
+  }
+
+  document.getElementById('uploadPreviewWrap').style.display = 'block';
+  document.getElementById('uploadConfirmBtn').disabled = false;
+}
+
+function cancelUpload() {
+  parsedUploadRows = [];
+  parsedRawHeaders = [];
+  document.getElementById('uploadPreviewWrap').style.display = 'none';
+  document.getElementById('fileInput').value = '';
+}
+
+async function confirmUpload() {
+  if (!parsedUploadRows.length) return;
+  const btn = document.getElementById('uploadConfirmBtn');
+  btn.disabled = true;
+  btn.textContent = '上傳中…';
+
+  try {
+    // Validate rows have at least date and revenue/orders
+    const validRows = parsedUploadRows.filter(r => r.date);
+    if (!validRows.length) {
+      toast('找不到有效的日期欄位，請確認欄位對應');
+      btn.disabled = false;
+      btn.textContent = '✅ 確認上傳';
+      return;
+    }
+
+    // Normalise data types
+    const rows = validRows.map(r => ({
+      date:         String(r.date || '').trim(),
+      product_id:   r.product_id ? String(r.product_id).trim() : null,
+      sku:          r.sku ? String(r.sku).trim() : null,
+      product_name: r.product_name ? String(r.product_name).trim() : null,
+      orders:       r.orders ? Number(r.orders) : 0,
+      revenue:      r.revenue ? Number(String(r.revenue).replace(/[^0-9.-]/g,'')) : 0,
+    }));
+
+    await sbWrite('shopline_daily_sales', rows);
+
+    toast(`✅ 成功上傳 ${rows.length} 筆資料`);
+    cancelUpload();
+    loadSales();
+  } catch(err) {
+    console.error('上傳失敗', err);
+    toast('上傳失敗：' + err.message);
+    btn.disabled = false;
+    btn.textContent = '✅ 確認上傳';
+  }
 }
 
 /* ══ 行動紀錄 ══ */
