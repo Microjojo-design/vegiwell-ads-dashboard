@@ -374,7 +374,7 @@
             拖曳 Shopline CSV / Excel 至此，或<strong>點此選擇檔案</strong>
           </div>
         </div>
-        <input type="file" id="fileInput" accept=".csv,.xlsx,.xls" style="display:none" onchange="handleFileSelect(event)">
+        <input type="file" id="fileInput" accept=".csv" multiple style="display:none" onchange="handleFileSelect(event)">
         <div id="uploadPreviewWrap" style="display:none">
           <div class="upload-preview">
             <div class="upload-preview-title" id="uploadPreviewTitle"></div>
@@ -651,9 +651,9 @@ async function loadOverview() {
   try {
     const [adA, salesA, adB, salesB] = await Promise.all([
       sbFetch(`ad_daily_metrics?date=gte.${aStart}&date=lte.${aEnd}&level=eq.campaign&select=platform,spend`),
-      sbFetch(`shopline_daily_sales?date=gte.${aStart}&date=lte.${aEnd}&select=revenue,orders`),
+      sbFetch(`shopline_daily_totals?date=gte.${aStart}&date=lte.${aEnd}&select=revenue,orders`),
       sbFetch(`ad_daily_metrics?date=gte.${bStart}&date=lte.${bEnd}&level=eq.campaign&select=platform,spend`),
-      sbFetch(`shopline_daily_sales?date=gte.${bStart}&date=lte.${bEnd}&select=revenue,orders`)
+      sbFetch(`shopline_daily_totals?date=gte.${bStart}&date=lte.${bEnd}&select=revenue,orders`)
     ]);
 
     // Period A
@@ -831,7 +831,7 @@ async function loadSales() {
   const days  = Number(document.getElementById('salesDays').value);
   const since = dateNDaysAgo(days);
   try {
-    const data = await sbFetch(`shopline_daily_sales?date=gte.${since}&order=date.asc&select=date,product_name,orders,revenue`);
+    const data = await sbFetch(`shopline_daily_totals?date=gte.${since}&order=date.asc&select=date,revenue,orders,sessions,conversion_rate,new_customers,returning_customers`);
 
     const ctx = document.getElementById('salesChart').getContext('2d');
     if (salesChartInst) salesChartInst.destroy();
@@ -842,14 +842,11 @@ async function loadSales() {
         options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}}}
       });
       document.getElementById('salesTableWrap').innerHTML =
-        '<div class="empty"><div class="empty-icon">🛒</div><div class="empty-text">尚無銷售數據<br>請手動下載 Shopline 報表並上傳</div></div>';
+        '<div class="empty"><div class="empty-icon">🛒</div><div class="empty-text">尚無銷售數據<br>請上傳 Shoplytics 4 個 CSV 或執行 shopline_parser.py</div></div>';
       return;
     }
 
-    // Daily totals
-    const byDate = {};
-    data.forEach(r => { byDate[r.date] = (byDate[r.date]||0) + Number(r.revenue||0); });
-    const dates = Object.keys(byDate).sort();
+    const dates = data.map(r => r.date);
 
     salesChartInst = new Chart(ctx, {
       type: 'bar',
@@ -857,7 +854,7 @@ async function loadSales() {
         labels: dates,
         datasets: [{
           label: '收入',
-          data: dates.map(d=>byDate[d]),
+          data: data.map(r => Number(r.revenue||0)),
           backgroundColor: 'rgba(186,105,61,0.75)',
           borderColor: '#BA693D', borderWidth: 1, borderRadius: 6
         }]
@@ -872,27 +869,30 @@ async function loadSales() {
       }
     });
 
-    // Product table
-    const byProd = {};
-    data.forEach(r => {
-      const k = r.product_name||'其他';
-      if (!byProd[k]) byProd[k] = { orders:0, revenue:0 };
-      byProd[k].orders  += Number(r.orders||0);
-      byProd[k].revenue += Number(r.revenue||0);
-    });
+    // Daily summary table
     document.getElementById('salesTableWrap').innerHTML = `
+      <div style="overflow-x:auto">
       <table>
-        <thead><tr><th>產品</th><th>訂單數</th><th>收入</th><th>平均客單價</th></tr></thead>
+        <thead><tr><th>日期</th><th>收入</th><th>訂單</th><th>客單價</th><th>工作階段</th><th>轉換率</th><th>新客</th><th>舊客</th></tr></thead>
         <tbody>
-          ${Object.entries(byProd).sort((a,b)=>b[1].revenue-a[1].revenue).map(([name,v])=>`
-            <tr>
-              <td>${name}</td>
-              <td>${v.orders.toLocaleString('zh-TW')}</td>
-              <td>NT$${Math.round(v.revenue).toLocaleString('zh-TW')}</td>
-              <td>NT$${v.orders>0 ? Math.round(v.revenue/v.orders).toLocaleString('zh-TW') : '--'}</td>
-            </tr>`).join('')}
+          ${data.map(r => {
+            const rev = Number(r.revenue||0);
+            const ord = Number(r.orders||0);
+            const aov = ord > 0 ? Math.round(rev/ord) : 0;
+            const cr  = r.conversion_rate ? (Number(r.conversion_rate)*100).toFixed(1)+'%' : '--';
+            return `<tr>
+              <td>${r.date}</td>
+              <td>NT$${Math.round(rev).toLocaleString('zh-TW')}</td>
+              <td>${ord}</td>
+              <td>NT$${aov.toLocaleString('zh-TW')}</td>
+              <td>${r.sessions ? Number(r.sessions).toLocaleString('zh-TW') : '--'}</td>
+              <td>${cr}</td>
+              <td>${r.new_customers ?? '--'}</td>
+              <td>${r.returning_customers ?? '--'}</td>
+            </tr>`;
+          }).join('')}
         </tbody>
-      </table>`;
+      </table></div>`;
   } catch(e) { console.error('銷售數據載入失敗', e); }
 }
 
@@ -989,68 +989,127 @@ function handleDragLeave(e) {
 function handleDrop(e) {
   e.preventDefault();
   document.getElementById('uploadZone').classList.remove('drag-over');
-  const file = e.dataTransfer.files[0];
-  if (file) processUploadFile(file);
+  const files = Array.from(e.dataTransfer.files).filter(f => f.name.endsWith('.csv'));
+  if (files.length) processShoplyticsFiles(files);
 }
 
 function handleFileSelect(e) {
-  const file = e.target.files[0];
-  if (file) processUploadFile(file);
-  // Reset input so the same file can be re-selected
+  const files = Array.from(e.target.files).filter(f => f.name.endsWith('.csv'));
+  if (files.length) processShoplyticsFiles(files);
   e.target.value = '';
 }
 
-function processUploadFile(file) {
-  const ext = file.name.split('.').pop().toLowerCase();
-  const reader = new FileReader();
+/* ── Shoplytics 解析 ── */
+function identifyFileType(filename) {
+  if (filename.includes('TotalSales'))            return 'sales';
+  if (filename.includes('TotalShoppers'))         return 'shoppers';
+  if (filename.includes('GrossMerchandiseValue')) return 'gmv';
+  if (filename.includes('NewlyAddedMembers'))     return 'members';
+  return null;
+}
 
-  reader.onload = function(e) {
-    try {
-      let wb;
-      if (ext === 'csv') {
-        wb = XLSX.read(e.target.result, { type: 'string', raw: false });
-      } else {
-        wb = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
-      }
-
-      const ws = wb.Sheets[wb.SheetNames[0]];
-      const rawData = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
-
-      if (!rawData || rawData.length < 2) {
-        toast('檔案內容為空或格式錯誤');
-        return;
-      }
-
-      const headers = rawData[0].map(h => String(h).trim());
-      parsedRawHeaders = headers;
-
-      // Map columns
-      const colMap = {};
-      headers.forEach((h, i) => {
-        if (SHOPLINE_COL_MAP[h]) colMap[i] = SHOPLINE_COL_MAP[h];
-      });
-
-      parsedUploadRows = rawData.slice(1).filter(row => row.some(c => c !== '')).map(row => {
-        const obj = {};
-        Object.entries(colMap).forEach(([idx, key]) => {
-          obj[key] = row[idx];
-        });
-        return obj;
-      });
-
-      // Show preview
-      showUploadPreview(file.name, rawData.slice(0, 6), headers);
-    } catch(err) {
-      console.error('檔案解析失敗', err);
-      toast('檔案解析失敗，請確認格式正確');
-    }
-  };
-
-  if (ext === 'csv') {
-    reader.readAsText(file, 'UTF-8');
-  } else {
-    reader.readAsArrayBuffer(file);
+function parseShoplyticsCSV(text) {
+  text = text.replace(/^﻿/, '');
+  const lines = text.split(/?
+/);
+  let headerIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].startsWith('組別')) { headerIdx = i; break; }
   }
+  if (headerIdx === -1) return {};
+  const headers = lines[headerIdx].split(',').map(h => h.trim());
+  const result = {};
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    const cols = lines[i].split(',');
+    if (cols[0]?.trim() !== '分析區間') continue;
+    const dateRaw = cols[2]?.trim();
+    if (!dateRaw) continue;
+    const date = dateRaw.replace(/\//g, '-');
+    const row = {};
+    headers.forEach((h, idx) => { if (h) row[h] = cols[idx]?.trim() ?? ''; });
+    result[date] = row;
+  }
+  return result;
+}
+
+let shoplyticsLoaded = {};
+let mergedRows = [];
+
+function processShoplyticsFiles(files) {
+  shoplyticsLoaded = {};
+  mergedRows = [];
+  document.getElementById('uploadPreviewWrap').style.display = 'none';
+
+  let pending = files.length;
+  files.forEach(file => {
+    const type = identifyFileType(file.name);
+    if (!type) { pending--; if (!pending) finalizeShopyticsUpload(); return; }
+    const reader = new FileReader();
+    reader.onload = e => {
+      shoplyticsLoaded[type] = parseShoplyticsCSV(e.target.result);
+      pending--;
+      if (!pending) finalizeShopyticsUpload();
+    };
+    reader.readAsText(file, 'UTF-8');
+  });
+}
+
+function finalizeShopyticsUpload() {
+  const allDates = new Set([
+    ...Object.keys(shoplyticsLoaded.sales    || {}),
+    ...Object.keys(shoplyticsLoaded.gmv      || {}),
+    ...Object.keys(shoplyticsLoaded.shoppers || {}),
+    ...Object.keys(shoplyticsLoaded.members  || {}),
+  ]);
+
+  if (!allDates.size) { toast('找不到有效的「分析區間」資料，請確認選取正確的 Shoplytics CSV'); return; }
+
+  mergedRows = [...allDates].sort().map(date => {
+    const s = (shoplyticsLoaded.sales    || {})[date] || {};
+    const g = (shoplyticsLoaded.gmv      || {})[date] || {};
+    const sh= (shoplyticsLoaded.shoppers || {})[date] || {};
+    const m = (shoplyticsLoaded.members  || {})[date] || {};
+    return {
+      date,
+      revenue:             parseFloat(s['總營業額'])         || null,
+      orders:              parseInt(s['總訂單量'])            || null,
+      returns:             parseFloat(s['退貨總額'])          || null,
+      cancellations:       parseFloat(s['取消總額'])          || null,
+      gmv:                 parseFloat(g['成交總額'])          || null,
+      sessions:            parseInt(g['總工作階段數'])         || null,
+      conversion_rate:     parseFloat(g['轉換率'])            || null,
+      new_customers:       parseInt(sh['新客消費顧客數'])      || null,
+      returning_customers: parseInt(sh['舊客消費顧客數'])      || null,
+      new_members:         parseInt(m['新增會員數'])           || null,
+    };
+  });
+
+  parsedUploadRows = mergedRows;
+  const types = Object.keys(shoplyticsLoaded);
+  const missing = ['sales','gmv','shoppers','members'].filter(t => !types.includes(t));
+  const warn = missing.length ? `（缺少：${missing.join('、')}）` : '';
+
+  document.getElementById('uploadPreviewTitle').textContent =
+    `已載入 ${types.length}/4 個 CSV ${warn}，共 ${mergedRows.length} 天`;
+  document.getElementById('uploadCount').textContent =
+    `日期範圍：${mergedRows[0]?.date} ～ ${mergedRows[mergedRows.length-1]?.date}`;
+  document.getElementById('uploadPreviewTable').innerHTML = `
+    <table>
+      <thead><tr><th>日期</th><th>收入</th><th>訂單</th><th>工作階段</th><th>新客</th><th>舊客</th><th>新增會員</th></tr></thead>
+      <tbody>
+        ${mergedRows.slice(0,5).map(r=>`<tr>
+          <td>${r.date}</td>
+          <td>${r.revenue != null ? 'NT$'+Math.round(r.revenue).toLocaleString('zh-TW') : '--'}</td>
+          <td>${r.orders ?? '--'}</td>
+          <td>${r.sessions ?? '--'}</td>
+          <td>${r.new_customers ?? '--'}</td>
+          <td>${r.returning_customers ?? '--'}</td>
+          <td>${r.new_members ?? '--'}</td>
+        </tr>`).join('')}
+      </tbody>
+    </table>`;
+  document.getElementById('uploadPreviewWrap').style.display = 'block';
+  document.getElementById('uploadConfirmBtn').disabled = false;
 }
 
 function showUploadPreview(filename, previewRows, headers) {
@@ -1099,17 +1158,30 @@ async function confirmUpload() {
       return;
     }
 
-    // Normalise data types
-    const rows = validRows.map(r => ({
-      date:         String(r.date || '').trim(),
-      product_id:   r.product_id ? String(r.product_id).trim() : null,
-      sku:          r.sku ? String(r.sku).trim() : null,
-      product_name: r.product_name ? String(r.product_name).trim() : null,
-      orders:       r.orders ? Number(r.orders) : 0,
-      revenue:      r.revenue ? Number(String(r.revenue).replace(/[^0-9.-]/g,'')) : 0,
-    }));
+    // Write to shopline_daily_totals (UPSERT)
+    const rows = validRows.map(r => {
+      const clean = { date: String(r.date).trim() };
+      ['revenue','returns','cancellations','gmv','conversion_rate'].forEach(k => {
+        if (r[k] != null) clean[k] = Number(r[k]);
+      });
+      ['orders','sessions','new_customers','returning_customers','new_members'].forEach(k => {
+        if (r[k] != null) clean[k] = parseInt(r[k]);
+      });
+      return clean;
+    });
 
-    await sbWrite('shopline_daily_sales', rows);
+    // Upsert: Prefer-Resolution: merge-duplicates for on_conflict
+    const res = await fetch(`${SB_URL}/rest/v1/shopline_daily_totals`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'apikey': SB_KEY,
+        'Authorization': `Bearer ${SB_KEY}`,
+        'Prefer': 'resolution=merge-duplicates',
+      },
+      body: JSON.stringify(rows),
+    });
+    if (!res.ok) throw new Error(await res.text());
 
     toast(`✅ 成功上傳 ${rows.length} 筆資料`);
     cancelUpload();
