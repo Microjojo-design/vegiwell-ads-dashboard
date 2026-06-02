@@ -1009,9 +1009,8 @@ function identifyFileType(filename) {
 }
 
 function parseShoplyticsCSV(text) {
-  text = text.replace(/^﻿/, '');
-  const lines = text.split(/?
-/);
+  text = text.replace(/^\uFEFF/, '');
+  const lines = text.replace(/\r/g, '').split('\n');
   let headerIdx = -1;
   for (let i = 0; i < lines.length; i++) {
     if (lines[i].startsWith('組別')) { headerIdx = i; break; }
