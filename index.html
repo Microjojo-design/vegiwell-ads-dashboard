@@ -1248,7 +1248,7 @@ async function confirmUpload() {
     });
 
     // Upsert: Prefer-Resolution: merge-duplicates for on_conflict
-    const res = await fetch(`${SB_URL}/rest/v1/shopline_daily_totals`, {
+    const res = await fetch(`${SB_URL}/rest/v1/shopline_daily_totals?on_conflict=date`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1262,7 +1262,7 @@ async function confirmUpload() {
 
     // 產品排行 → shopline_weekly_products
     if (shoplyticsLoaded.products?.products?.length) {
-      const prodRes = await fetch(`${SB_URL}/rest/v1/shopline_weekly_products`, {
+      const prodRes = await fetch(`${SB_URL}/rest/v1/shopline_weekly_products?on_conflict=week_start,rank`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
