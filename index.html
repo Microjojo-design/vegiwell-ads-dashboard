@@ -1239,10 +1239,10 @@ async function confirmUpload() {
     const rows = validRows.map(r => {
       const clean = { date: String(r.date).trim() };
       ['revenue','returns','cancellations','gmv','conversion_rate'].forEach(k => {
-        if (r[k] != null) clean[k] = Number(r[k]);
+        clean[k] = r[k] != null ? Number(r[k]) : null;
       });
       ['orders','sessions','new_customers','returning_customers','new_members'].forEach(k => {
-        if (r[k] != null) clean[k] = parseInt(r[k]);
+        clean[k] = r[k] != null ? parseInt(r[k]) : null;
       });
       return clean;
     });
