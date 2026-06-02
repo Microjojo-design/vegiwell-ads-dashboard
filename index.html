@@ -401,12 +401,18 @@
         <div class="chart-wrap"><canvas id="salesChart"></canvas></div>
       </div>
       <div class="tbl-box">
-        <div class="tbl-hdr"><span class="tbl-title">銷售明細（依產品）</span></div>
+        <div class="tbl-hdr"><span class="tbl-title">每日銷售明細</span></div>
         <div id="salesTableWrap">
           <div class="empty">
             <div class="empty-icon">🛒</div>
             <div class="empty-text">尚無銷售數據<br>請手動下載 Shopline 報表並上傳</div>
           </div>
+        </div>
+      </div>
+      <div class="tbl-box" style="margin-top:16px">
+        <div class="tbl-hdr"><span class="tbl-title">📦 產品銷售排行</span></div>
+        <div id="productRankWrap">
+          <div class="empty"><div class="empty-icon">📦</div><div class="empty-text">上傳 Top10ProductsSold CSV 即可查看</div></div>
         </div>
       </div>
     </div>
@@ -831,7 +837,7 @@ async function loadSales() {
   const days  = Number(document.getElementById('salesDays').value);
   const since = dateNDaysAgo(days);
   try {
-    const data = await sbFetch(`shopline_daily_totals?date=gte.${since}&order=date.asc&select=date,revenue,orders,sessions,conversion_rate,new_customers,returning_customers`);
+    const data = await sbFetch(`shopline_daily_totals?date=gte.${since}&order=date.asc&select=date,revenue,orders,sessions,conversion_rate,new_customers,returning_customers,new_members`);
 
     const ctx = document.getElementById('salesChart').getContext('2d');
     if (salesChartInst) salesChartInst.destroy();
@@ -842,7 +848,8 @@ async function loadSales() {
         options:{responsive:true,maintainAspectRatio:false,plugins:{legend:{display:false}}}
       });
       document.getElementById('salesTableWrap').innerHTML =
-        '<div class="empty"><div class="empty-icon">🛒</div><div class="empty-text">尚無銷售數據<br>請上傳 Shoplytics 4 個 CSV 或執行 shopline_parser.py</div></div>';
+        '<div class="empty"><div class="empty-icon">🛒</div><div class="empty-text">尚無銷售數據<br>請上傳 Shoplytics 5 個 CSV 或執行 shopline_parser.py</div></div>';
+      loadProductRanking();
       return;
     }
 
@@ -873,7 +880,7 @@ async function loadSales() {
     document.getElementById('salesTableWrap').innerHTML = `
       <div style="overflow-x:auto">
       <table>
-        <thead><tr><th>日期</th><th>收入</th><th>訂單</th><th>客單價</th><th>工作階段</th><th>轉換率</th><th>新客</th><th>舊客</th></tr></thead>
+        <thead><tr><th>日期</th><th>收入</th><th>訂單</th><th>客單價</th><th>工作階段</th><th>轉換率</th><th>新客</th><th>舊客</th><th>新增會員</th></tr></thead>
         <tbody>
           ${data.map(r => {
             const rev = Number(r.revenue||0);
@@ -889,11 +896,46 @@ async function loadSales() {
               <td>${cr}</td>
               <td>${r.new_customers ?? '--'}</td>
               <td>${r.returning_customers ?? '--'}</td>
+              <td>${r.new_members ?? '--'}</td>
             </tr>`;
           }).join('')}
         </tbody>
       </table></div>`;
+    loadProductRanking();
   } catch(e) { console.error('銷售數據載入失敗', e); }
+}
+
+async function loadProductRanking() {
+  const wrap = document.getElementById('productRankWrap');
+  if (!wrap) return;
+  try {
+    const data = await sbFetch('shopline_weekly_products?order=week_start.desc,rank.asc&limit=20');
+    if (!data.length) {
+      wrap.innerHTML = '<div class="empty"><div class="empty-icon">📦</div><div class="empty-text">尚無產品排行資料<br>請上傳 Top10ProductsSold CSV</div></div>';
+      return;
+    }
+    const weeks = {};
+    data.forEach(r => {
+      const key = `${r.week_start} ~ ${r.week_end}`;
+      if (!weeks[key]) weeks[key] = [];
+      weeks[key].push(r);
+    });
+    wrap.innerHTML = Object.entries(weeks).map(([range, products]) => `
+      <div style="padding:8px 16px 4px;font-size:12px;color:var(--muted)">📅 ${range}</div>
+      <div style="overflow-x:auto"><table>
+        <thead><tr><th>#</th><th style="text-align:left">商品</th><th>銷量</th><th>銷售額</th><th>瀏覽量</th></tr></thead>
+        <tbody>
+          ${products.map(p=>`<tr>
+            <td>${p.rank}</td>
+            <td style="text-align:left">${p.product_name}</td>
+            <td>${p.sales_qty ?? 0}</td>
+            <td>NT$${Math.round(p.sales_amount||0).toLocaleString('zh-TW')}</td>
+            <td>${p.page_views ?? 0}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table></div>
+    `).join('');
+  } catch(e) { console.error('產品排行載入失敗', e); }
 }
 
 /* ══ AI 建議 ══ */
@@ -1005,7 +1047,38 @@ function identifyFileType(filename) {
   if (filename.includes('TotalShoppers'))         return 'shoppers';
   if (filename.includes('GrossMerchandiseValue')) return 'gmv';
   if (filename.includes('NewlyAddedMembers'))     return 'members';
+  if (filename.includes('Top10ProductsSold'))     return 'products';
   return null;
+}
+
+function parseTop10CSV(text) {
+  text = text.replace(/^﻿/, '');
+  const lines = text.replace(/\r/g, '').split('\n');
+  const dateRange = (lines[0] || '').split(',').slice(1).join(',').trim();
+  const parts = dateRange.split(' - ');
+  const weekStart = (parts[0] || '').trim().replace(/\//g, '-');
+  const weekEnd   = (parts[1] || '').trim().replace(/\//g, '-') || weekStart;
+  let headerIdx = -1;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].startsWith('No.')) { headerIdx = i; break; }
+  }
+  if (headerIdx === -1) return { weekStart, weekEnd, products: [] };
+  const products = [];
+  for (let i = headerIdx + 1; i < lines.length; i++) {
+    const cols = lines[i].split(',');
+    const rankStr = cols[0]?.trim();
+    if (!rankStr || !/^\d+$/.test(rankStr)) continue;
+    products.push({
+      week_start:   weekStart,
+      week_end:     weekEnd,
+      rank:         parseInt(rankStr),
+      product_name: cols[1]?.trim() || '',
+      sales_qty:    parseInt(cols[2]) || 0,
+      sales_amount: parseFloat(cols[3]) || 0,
+      page_views:   parseInt(cols[4]) || 0,
+    });
+  }
+  return { weekStart, weekEnd, products };
 }
 
 function parseShoplyticsCSV(text) {
@@ -1045,7 +1118,11 @@ function processShoplyticsFiles(files) {
     if (!type) { pending--; if (!pending) finalizeShopyticsUpload(); return; }
     const reader = new FileReader();
     reader.onload = e => {
-      shoplyticsLoaded[type] = parseShoplyticsCSV(e.target.result);
+      if (type === 'products') {
+        shoplyticsLoaded[type] = parseTop10CSV(e.target.result);
+      } else {
+        shoplyticsLoaded[type] = parseShoplyticsCSV(e.target.result);
+      }
       pending--;
       if (!pending) finalizeShopyticsUpload();
     };
@@ -1087,9 +1164,10 @@ function finalizeShopyticsUpload() {
   const types = Object.keys(shoplyticsLoaded);
   const missing = ['sales','gmv','shoppers','members'].filter(t => !types.includes(t));
   const warn = missing.length ? `（缺少：${missing.join('、')}）` : '';
+  const hasProducts = !!(shoplyticsLoaded.products?.products?.length);
 
   document.getElementById('uploadPreviewTitle').textContent =
-    `已載入 ${types.length}/4 個 CSV ${warn}，共 ${mergedRows.length} 天`;
+    `已載入 ${types.length}/5 個 CSV ${warn}${hasProducts ? '｜含產品排行' : ''}，共 ${mergedRows.length} 天`;
   document.getElementById('uploadCount').textContent =
     `日期範圍：${mergedRows[0]?.date} ～ ${mergedRows[mergedRows.length-1]?.date}`;
   document.getElementById('uploadPreviewTable').innerHTML = `
@@ -1181,6 +1259,21 @@ async function confirmUpload() {
       body: JSON.stringify(rows),
     });
     if (!res.ok) throw new Error(await res.text());
+
+    // 產品排行 → shopline_weekly_products
+    if (shoplyticsLoaded.products?.products?.length) {
+      const prodRes = await fetch(`${SB_URL}/rest/v1/shopline_weekly_products`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'apikey': SB_KEY,
+          'Authorization': `Bearer ${SB_KEY}`,
+          'Prefer': 'resolution=merge-duplicates',
+        },
+        body: JSON.stringify(shoplyticsLoaded.products.products),
+      });
+      if (!prodRes.ok) console.warn('產品排行上傳失敗:', await prodRes.text());
+    }
 
     toast(`✅ 成功上傳 ${rows.length} 筆資料`);
     cancelUpload();
