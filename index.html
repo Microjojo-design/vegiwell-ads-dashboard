@@ -419,6 +419,9 @@
 
     <!-- ── AI 建議 ── -->
     <div class="page" id="page-ai">
+      <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
+        <button class="ai-refresh-btn" id="reanalyzeBtn" onclick="reanalyzeAI()">🔄 重新產生 AI 建議</button>
+      </div>
       <div id="aiWrap"></div>
     </div>
 
@@ -1015,6 +1018,58 @@ function copyVendorText() {
   navigator.clipboard.writeText(el.textContent).then(() => toast('已複製到剪貼簿'));
 }
 
+let reanalyzeTimer = null;
+let reanalyzeInsightTime = null;
+
+async function reanalyzeAI() {
+  const btn = document.getElementById('reanalyzeBtn');
+  const wrap = document.getElementById('aiWrap');
+  btn.disabled = true;
+  btn.textContent = '⏳ 分析中（約 30 秒）…';
+  wrap.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-text">AI 正在重新分析最新數據，請稍候…<br><small style="color:var(--muted)">完成後將自動更新</small></div></div>';
+
+  try {
+    // 記錄目前最新 insights 時間戳，用來偵測是否有新記錄
+    const current = await sbFetch('ad_weekly_insights?order=created_at.desc&limit=1&select=created_at');
+    reanalyzeInsightTime = current.length ? current[0].created_at : null;
+
+    const sessId = 'reanalyze_' + Date.now();
+    await fetch(`${SB_URL}/rest/v1/agent_conversations`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'apikey': SB_KEY, 'Authorization': `Bearer ${SB_KEY}` },
+      body: JSON.stringify({ session_id: sessId, role: 'user', content: '/reanalyze', status: 'pending' }),
+    });
+
+    // 每 8 秒輪詢一次，最多等 3 分鐘
+    let attempts = 0;
+    reanalyzeTimer = setInterval(async () => {
+      attempts++;
+      if (attempts > 22) {
+        clearInterval(reanalyzeTimer);
+        btn.disabled = false;
+        btn.textContent = '🔄 重新產生 AI 建議';
+        wrap.innerHTML = '<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-text">逾時，請確認 Mac Mini Agent 正在執行<br>或手動執行 python3 main.py --mode weekly</div></div>';
+        return;
+      }
+      try {
+        const latest = await sbFetch('ad_weekly_insights?order=created_at.desc&limit=1&select=created_at');
+        const latestTime = latest.length ? latest[0].created_at : null;
+        if (latestTime && latestTime !== reanalyzeInsightTime) {
+          clearInterval(reanalyzeTimer);
+          btn.disabled = false;
+          btn.textContent = '🔄 重新產生 AI 建議';
+          toast('✅ AI 建議已更新！');
+          loadAI();
+        }
+      } catch(e) {}
+    }, 8000);
+  } catch(e) {
+    btn.disabled = false;
+    btn.textContent = '🔄 重新產生 AI 建議';
+    wrap.innerHTML = `<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-text">指令傳送失敗：${e.message}</div></div>`;
+  }
+}
+
 /* ══ Shopline Upload ══ */
 let parsedUploadRows = [];
 let parsedRawHeaders = [];
@@ -1440,3 +1495,4 @@ window.onload = () => {
 </script>
 </body>
 </html>
+
