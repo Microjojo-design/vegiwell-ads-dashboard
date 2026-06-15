@@ -1029,10 +1029,6 @@ async function reanalyzeAI() {
   wrap.innerHTML = '<div class="empty"><div class="empty-icon">⏳</div><div class="empty-text">AI 正在重新分析最新數據，請稍候…<br><small style="color:var(--muted)">完成後將自動更新</small></div></div>';
 
   try {
-    // 記錄目前最新 insights 時間戳，用來偵測是否有新記錄
-    const current = await sbFetch('ad_weekly_insights?order=created_at.desc&limit=1&select=created_at');
-    reanalyzeInsightTime = current.length ? current[0].created_at : null;
-
     const sessId = 'reanalyze_' + Date.now();
     await fetch(`${SB_URL}/rest/v1/agent_conversations`, {
       method: 'POST',
@@ -1040,7 +1036,7 @@ async function reanalyzeAI() {
       body: JSON.stringify({ session_id: sessId, role: 'user', content: '/reanalyze', status: 'pending' }),
     });
 
-    // 每 8 秒輪詢一次，最多等 3 分鐘
+    // 每 8 秒輪詢一次，偵測 agent 回覆（assistant role），最多等 3 分鐘
     let attempts = 0;
     reanalyzeTimer = setInterval(async () => {
       attempts++;
@@ -1052,9 +1048,8 @@ async function reanalyzeAI() {
         return;
       }
       try {
-        const latest = await sbFetch('ad_weekly_insights?order=created_at.desc&limit=1&select=created_at');
-        const latestTime = latest.length ? latest[0].created_at : null;
-        if (latestTime && latestTime !== reanalyzeInsightTime) {
+        const replies = await sbFetch(`agent_conversations?session_id=eq.${sessId}&role=eq.assistant&limit=1`);
+        if (replies.length) {
           clearInterval(reanalyzeTimer);
           btn.disabled = false;
           btn.textContent = '🔄 重新產生 AI 建議';
