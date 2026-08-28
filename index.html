@@ -281,7 +281,7 @@
         <div class="card highlight">
           <div class="card-label">真實 ROAS（含代操費）</div>
           <div class="card-value" id="card-roas">--</div>
-          <div class="card-sub" style="margin-bottom:6px">Shopline 收入 ÷ 含代操總成本</div>
+          <div class="card-sub" style="margin-bottom:6px">Shopline 收入 ÷ 含代操總成本（Meta ×1.2；Google ÷0.8 僅計至 2026-08-02，之後自有帳戶無代操費）</div>
           <div style="font-size:11px;opacity:.8;margin-bottom:2px">不含代操費：<span id="card-roas-raw" style="font-weight:700">--</span></div>
           <div class="card-delta delta-neutral" id="delta-roas"></div>
         </div>
@@ -514,6 +514,18 @@ async function sbFetch(path) {
   return res.json();
 }
 
+// PostgREST 一次最多回 1000 筆且不報錯（靜默截斷），日期範圍拉長的查詢一律走這支分頁。
+async function sbFetchAll(path, pageSize = 1000) {
+  const out = [];
+  const sep = path.includes('?') ? '&' : '?';
+  for (let page = 0; page < 50; page++) {
+    const rows = await sbFetch(`${path}${sep}limit=${pageSize}&offset=${page * pageSize}`);
+    out.push(...rows);
+    if (rows.length < pageSize) break;
+  }
+  return out;
+}
+
 /* ══ Supabase write ══ */
 async function sbWrite(table, rows) {
   const res = await fetch(`${SB_URL}/rest/v1/${table}`, {
@@ -655,32 +667,46 @@ function applyCustomPeriod() {
 /* ══ 總覽 ══ */
 let roasChartInst, spendPieInst;
 
+// 代操費換算：Meta 花費 ×1.2；Google 花費 ÷0.8。
+// 廠商（SAYA/BZ_MO）7/31 停止代操，8/1~8/2 為舊帳戶交接空窗，8/3 起改自有帳戶自行操作、
+// 不再有代操費。故 Google 加成計至 GOOGLE_AGENCY_END（含當日）為止，之後照原花費計。
+const META_FEE_MULTIPLIER = 1.2;
+const GOOGLE_FEE_MULTIPLIER = 1 / 0.8;
+const GOOGLE_AGENCY_END = '2026-08-02';  // 含當日；8/3 起自有帳戶無代操費
+
+const sumSpend = rows => rows.reduce((s,r)=>s+Number(r.spend||0), 0);
+const googleCostWithFee = rows => rows.reduce(
+  (s,r)=>s + Number(r.spend||0) * (String(r.date||'') <= GOOGLE_AGENCY_END ? GOOGLE_FEE_MULTIPLIER : 1), 0);
+
 async function loadOverview() {
   const { aStart, aEnd, bStart, bEnd } = currentPeriod;
   try {
-    const [adA, salesA, adB, salesB] = await Promise.all([
-      sbFetch(`ad_daily_metrics?date=gte.${aStart}&date=lte.${aEnd}&level=eq.campaign&select=platform,spend`),
-      sbFetch(`shopline_daily_totals?date=gte.${aStart}&date=lte.${aEnd}&select=revenue,orders`),
-      sbFetch(`ad_daily_metrics?date=gte.${bStart}&date=lte.${bEnd}&level=eq.campaign&select=platform,spend`),
-      sbFetch(`shopline_daily_totals?date=gte.${bStart}&date=lte.${bEnd}&select=revenue,orders`)
+    // Meta 取 campaign 層、Google 取 adset 層：ad_daily_metrics 的 Meta 有三層級（直接加總會重複計算），
+    // 而 Google 從頭到尾只有 adset 層——原本兩邊都抓 level=campaign，Google 花費一直被算成 0。
+    const [metaAdA, googleAdA, salesA, metaAdB, googleAdB, salesB] = await Promise.all([
+      sbFetchAll(`ad_daily_metrics?date=gte.${aStart}&date=lte.${aEnd}&platform=eq.meta&level=eq.campaign&select=date,spend`),
+      sbFetchAll(`ad_daily_metrics?date=gte.${aStart}&date=lte.${aEnd}&platform=eq.google&level=eq.adset&select=date,spend`),
+      sbFetchAll(`shopline_daily_totals?date=gte.${aStart}&date=lte.${aEnd}&select=revenue,orders`),
+      sbFetchAll(`ad_daily_metrics?date=gte.${bStart}&date=lte.${bEnd}&platform=eq.meta&level=eq.campaign&select=date,spend`),
+      sbFetchAll(`ad_daily_metrics?date=gte.${bStart}&date=lte.${bEnd}&platform=eq.google&level=eq.adset&select=date,spend`),
+      sbFetchAll(`shopline_daily_totals?date=gte.${bStart}&date=lte.${bEnd}&select=revenue,orders`)
     ]);
 
     // Period A
-    const metaSpendA    = adA.filter(r=>r.platform==='meta').reduce((s,r)=>s+Number(r.spend||0), 0);
-    const googleSpendA  = adA.filter(r=>r.platform==='google').reduce((s,r)=>s+Number(r.spend||0), 0);
+    const metaSpendA    = sumSpend(metaAdA);
+    const googleSpendA  = sumSpend(googleAdA);
     const totalSpendA   = metaSpendA + googleSpendA;
-    // 含代操費總成本：Meta × 1.2，Google ÷ 0.8
-    const totalCostA    = metaSpendA * 1.2 + googleSpendA / 0.8;
+    const totalCostA    = metaSpendA * META_FEE_MULTIPLIER + googleCostWithFee(googleAdA);
     const totalRevA     = salesA.reduce((s,r)=>s+Number(r.revenue||0), 0);
     const totalOrdersA  = salesA.reduce((s,r)=>s+Number(r.orders||0), 0);
     const roasRawA      = totalSpendA > 0 ? totalRevA / totalSpendA : null;   // 不含代操
     const roasWithFeeA  = totalCostA  > 0 ? totalRevA / totalCostA  : null;   // 含代操
 
     // Period B
-    const metaSpendB    = adB.filter(r=>r.platform==='meta').reduce((s,r)=>s+Number(r.spend||0), 0);
-    const googleSpendB  = adB.filter(r=>r.platform==='google').reduce((s,r)=>s+Number(r.spend||0), 0);
+    const metaSpendB    = sumSpend(metaAdB);
+    const googleSpendB  = sumSpend(googleAdB);
     const totalSpendB   = metaSpendB + googleSpendB;
-    const totalCostB    = metaSpendB * 1.2 + googleSpendB / 0.8;
+    const totalCostB    = metaSpendB * META_FEE_MULTIPLIER + googleCostWithFee(googleAdB);
     const totalRevB     = salesB.reduce((s,r)=>s+Number(r.revenue||0), 0);
     const totalOrdersB  = salesB.reduce((s,r)=>s+Number(r.orders||0), 0);
     const roasWithFeeB  = totalCostB > 0 ? totalRevB / totalCostB : null;
